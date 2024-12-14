@@ -1,0 +1,6 @@
+requests>=2.31.0
+PyPDF2>=3.0.0
+spacy>=3.7.2
+langchain>=0.1.0
+langchain-openai>=0.0.5
+python-dotenv>=1.0.0
