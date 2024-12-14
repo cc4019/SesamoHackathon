@@ -374,7 +374,7 @@ def summarize_analysis_with_llm(summary_text, api_key, mode):
             The following text contains detailed external papers recommendation results from various papers:
             {summary_text}
 
-            Please provide a concise summary that explains how different papers help each team project, including necessary details and specific examples where relevant.
+            Please provide a single, cohesive summary that explains how different papers help each team project, including necessary details and specific examples where relevant.
             """
 
         # Get the response from LLM
@@ -487,7 +487,7 @@ def main():
                 summary_paragraphs.append(content)
         
         summary_text = "\n\n".join(summary_paragraphs)
-        # summary = summarize_analysis_with_llm(summary_text, api_key)
+        summary = summarize_analysis_with_llm(summary_text, api_key, mode = 'aggregation of external papers recommendation')
         
         with open(summary_file, 'w', encoding='utf-8', errors='ignore') as f:
             f.write("SUMMARY OF ANALYSIS RESULTS\n")
