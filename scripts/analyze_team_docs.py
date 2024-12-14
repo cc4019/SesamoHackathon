@@ -89,12 +89,12 @@ def retrieve_local_papers(query, external_papers_path):
     pdf_files = list(external_papers_path.glob("*.pdf"))
     paper_texts = []
     paper_paths = []
-    paper_analysis_results = []
+    # paper_analysis_results = []
     
     for pdf_file in pdf_files:
-        text = extract_text_from_pdf(pdf_file)
-        analysis_results = analyze_document_with_llm(text)
-        paper_analysis_results.append(analysis_results)
+        text = extract_text_from_pdf(pdf_file)[:1000]  # Limit to first 500 chars for embedding
+        # analysis_results = analyze_document_with_llm(text)
+        # paper_analysis_results.append(analysis_results)
         paper_texts.append(text)
         paper_paths.append(pdf_file)
     
@@ -103,8 +103,8 @@ def retrieve_local_papers(query, external_papers_path):
     
     # Call the semanticSimilarity function for each paper text
     paper_embeddings = []
-    for text in paper_analysis_results:
-        embedding = model.encode([text['full_results']])[0]
+    for text in paper_texts:
+        embedding = model.encode([text])[0]
         paper_embeddings.append(embedding)
     
     # Compute similarity scores using cosine similarity
@@ -112,19 +112,64 @@ def retrieve_local_papers(query, external_papers_path):
     for paper_embedding in paper_embeddings:
         similarity = cosine_similarity([query_embedding], [paper_embedding])[0][0]
         cosine_similarities.append(similarity)
-    
-    # Get the top 1 most similar papers
-    similar_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:1]
+
+    # Get the top k most similar papers
+    k = 3
+    similar_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:3]
     retrieved_papers = []
 
     for index in similar_indices:
         retrieved_papers.append({
             "title": paper_paths[index].stem,
             "path": paper_paths[index],
-            "snippet": paper_analysis_results[index]  # Include a snippet of the text
+            "snippet": paper_texts[index]  # Include a snippet of the text
         })
     
     return retrieved_papers
+
+# def retrieve_local_papers(query, external_papers_path):
+#     """Retrieve papers from the local external papers folder based on the query."""
+#     model = SentenceTransformer('all-MiniLM-L6-v2')
+    
+#     pdf_files = list(external_papers_path.glob("*.pdf"))
+#     paper_texts = []
+#     paper_paths = []
+#     paper_analysis_results = []
+    
+#     for pdf_file in pdf_files:
+#         text = extract_text_from_pdf(pdf_file)
+#         analysis_results = analyze_document_with_llm(text)
+#         paper_analysis_results.append(analysis_results)
+#         paper_texts.append(text)
+#         paper_paths.append(pdf_file)
+    
+#     # Call the semanticSimilarity function for the query
+#     query_embedding = model.encode([query])[0]
+    
+#     # Call the semanticSimilarity function for each paper text
+#     paper_embeddings = []
+#     for text in paper_analysis_results:
+#         embedding = model.encode([text['full_results']])[0]
+#         paper_embeddings.append(embedding)
+    
+#     # Compute similarity scores using cosine similarity
+#     cosine_similarities = []
+#     for paper_embedding in paper_embeddings:
+#         similarity = cosine_similarity([query_embedding], [paper_embedding])[0][0]
+#         cosine_similarities.append(similarity)
+    
+#     # Get the top 3 most similar papers
+#     similar_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:3]
+#     retrieved_papers = []
+
+#     for index in similar_indices:
+#         retrieved_papers.append({
+#             "title": paper_paths[index].stem,
+#             "path": paper_paths[index],
+#             "snippet": paper_analysis_results[index]  # Include a snippet of the text
+#         })
+    
+#     return retrieved_papers
 
 def analyze_document_with_llm(text):
     """Use LLM to analyze document and generate questions."""
@@ -195,15 +240,14 @@ def analyze_document_with_llm(text):
             combined_analysis = ""
         
         # Extract potential improvement questions and gaps
-        improvement_questions = extract_improvement_questions(combined_analysis)
-        gaps = extract_gaps(combined_analysis)
-        
+        # improvement_questions = extract_improvement_questions(combined_analysis)
+        # gaps = extract_gaps(combined_analysis)
         
         analysis_results = {
             "full_results": response.content,
             "combined_analysis": combined_analysis,
-            "improvement_questions": improvement_questions,
-            "gaps": gaps,
+            # "improvement_questions": improvement_questions,
+            # "gaps": gaps,
         }
         
         return analysis_results
@@ -302,35 +346,7 @@ def explain_how_papers_help_with_llm(paper_title, snippet, questions_and_gaps, a
         logging.error(f"Error in LLM processing: {e}")
         return "An error occurred while generating the explanation with the LLM."
 
-        def summarize_analysis_with_llm(summary_text, api_key):
-            """Use LLM to summarize the analysis results."""
-
-            try:
-                # Initialize LLM
-                llm = ChatOpenAI(
-                    api_key=api_key,
-                    model="gpt-4o-mini",  # Use a lightweight model; adjust as needed
-                    temperature=0.7
-                )
-                
-                # Construct the prompt
-                prompt = f"""
-                You are a professional researcher tasked with summarizing the analysis results of multiple academic papers.
-
-                The following text contains detailed analysis results from various papers:
-                {summary_text}
-
-                Please provide a concise summary that explains how different papers help each team project, including necessary details and specific examples where relevant.
-                """
-                
-                # Get the response from LLM
-                response = llm.invoke(prompt)
-                summary = response.content.strip()
-                return summary
-            except Exception as e:
-                logging.error(f"Error in LLM processing: {e}")
-                return "An error occurred while generating the summary with the LLM."
-def summarize_analysis_with_llm(summary_text, api_key):
+def summarize_analysis_with_llm(summary_text, api_key, mode):
     """Use LLM to summarize the analysis results."""
 
     try:
@@ -340,17 +356,27 @@ def summarize_analysis_with_llm(summary_text, api_key):
             model="gpt-4o-mini",  # Use a lightweight model; adjust as needed
             temperature=0.7
         )
-        
-        # Construct the prompt
-        prompt = f"""
-        You are a professional researcher tasked with summarizing the analysis results of multiple academic papers.
+        if mode == 'aggregation of analysis':
+            # Construct the prompt
+            prompt = f"""
+            You are a professional researcher tasked with summarizing the analysis results of multiple academic papers.
 
-        The following text contains detailed analysis results from various papers:
-        {summary_text}
+            The following text contains detailed analysis results from multiple papers:
+            {summary_text}
 
-        Please provide a concise summary that explains how different papers help each team project, including necessary details and specific examples where relevant.
-        """
-        
+            Please provide a single, cohesive summary that with the existing structure across all papers. Ensure the summary is concise, well-structured, and avoids redundant information.
+            """
+        elif mode == 'aggregation of external papers recommendation':
+            # Construct the prompt
+            prompt = f"""
+            You are a professional researcher tasked with summarizing the external papers recommendation results of multiple academic papers.
+
+            The following text contains detailed external papers recommendation results from various papers:
+            {summary_text}
+
+            Please provide a concise summary that explains how different papers help each team project, including necessary details and specific examples where relevant.
+            """
+
         # Get the response from LLM
         response = llm.invoke(prompt)
         summary = response.content.strip()
@@ -368,6 +394,7 @@ def main():
     pdf_files = list(docs_path.glob("*.pdf"))
     logging.info(f"Found {len(pdf_files)} PDF files")
     
+    aggregated_analysis = ""
     for pdf_file in pdf_files:
         logging.info(f"\nAnalyzing {pdf_file.name}...")
         
@@ -382,13 +409,6 @@ def main():
         logging.info("Starting document analysis...")
         analysis_results = analyze_document_with_llm(text)
 
-        # Retrieve papers for improvement questions and gaps
-        external_papers_path = get_external_papers_path()
-        retrieved_papers = []
-        papers = retrieve_local_papers(analysis_results['full_results'], external_papers_path)
-        retrieved_papers.extend(papers)
-        analysis_results['retrieved_papers'] = retrieved_papers
-
         # Save analysis results as text
         output_file = output_path / f"{pdf_file.stem}_analysis.txt"
         logging.info(f"Saving analysis results to {output_file}")
@@ -398,39 +418,60 @@ def main():
                 f.write("================\n\n")
                 f.write("\nANALYSIS AND QUESTIONS:\n")
                 f.write(analysis_results["combined_analysis"])
-                f.write("\n\nIMPROVEMENT QUESTIONS:\n")
-                for question in analysis_results["improvement_questions"]:
-                    f.write(f"- {question}\n")
-                f.write("\nGAPS:\n")
-                for gap in analysis_results["gaps"]:
-                    f.write(f"- {gap}\n")
+                # f.write("\n\nIMPROVEMENT QUESTIONS:\n")
+                # for question in analysis_results["improvement_questions"]:
+                #     f.write(f"- {question}\n")
+                # f.write("\nGAPS:\n")
+                # for gap in analysis_results["gaps"]:
+                #     f.write(f"- {gap}\n")
             logging.info("Analysis results saved successfully")
         except Exception as e:
             logging.error(f"Error saving analysis results: {e}")
         
-        # Save retrieved papers
-        recommendation_file = output_path / f"{pdf_file.stem}_external-paper_recommendation.txt"
-        logging.info(f"Saving retrieved papers to {recommendation_file}")
-        try:
-            with open(recommendation_file, 'w', encoding='utf-8', errors='ignore') as f:
-                f.write("EXTERNAL PAPER RECOMMENDATIONS\n")
-                f.write("=============================\n\n")
-                if analysis_results["retrieved_papers"]:
-                    for paper in analysis_results["retrieved_papers"]:
-                        # Use LLM to generate the explanation
-                        explanation = explain_how_papers_help_with_llm(
-                            paper_title=paper['title'], 
-                            snippet=paper['snippet'], 
-                            questions_and_gaps=analysis_results["improvement_questions"] + analysis_results["gaps"],
-                            api_key=api_key
-                        )
-                        f.write(f"- {paper['title']}:\n")
-                        f.write(f"  {explanation}\n\n")
-                else:
-                    f.write("No relevant papers found.\n")
-            logging.info("Retrieved papers saved successfully")
-        except Exception as e:
-            logging.error(f"Error saving retrieved papers: {e}")
+        # Save full analysis results for summarization
+        aggregated_analysis += f"\n\n{analysis_results['full_results']}"
+    # Generate a summary of the full analysis results
+    summary = summarize_analysis_with_llm(aggregated_analysis, api_key, 'aggregation of analysis')
+    # Retrieve papers for improvement questions and gaps
+    external_papers_path = get_external_papers_path()
+    retrieved_papers = []
+    papers = retrieve_local_papers(summary, external_papers_path)
+    retrieved_papers.extend(papers)
+    analysis_results['retrieved_papers'] = retrieved_papers
+    output_file = output_path / f"summarized_analysis.txt"
+    logging.info(f"Saving analysis results to {output_file}")
+    try:
+        with open(output_file, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write("Summarized ANALYSIS\n")
+            f.write(summary)
+        logging.info("Analysis results saved successfully")
+    except Exception as e:
+        logging.error(f"Error saving analysis results: {e}")
+
+
+    # Save retrieved papers
+    recommendation_file = output_path / f"summarized_external-paper_recommendation.txt"
+    logging.info(f"Saving retrieved papers to {recommendation_file}")
+    try:
+        with open(recommendation_file, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write("EXTERNAL PAPER RECOMMENDATIONS\n")
+            f.write("=============================\n\n")
+            if analysis_results["retrieved_papers"]:
+                for paper in analysis_results["retrieved_papers"]:
+                    # Use LLM to generate the explanation
+                    explanation = explain_how_papers_help_with_llm(
+                        paper_title=paper['title'], 
+                        snippet=paper['snippet'], 
+                        questions_and_gaps=extract_improvement_questions(summary) + extract_gaps(summary),
+                        api_key=api_key
+                    )
+                    f.write(f"- {paper['title']}:\n")
+                    f.write(f"  {explanation}\n\n")
+            else:
+                f.write("No relevant papers found.\n")
+        logging.info("Retrieved papers saved successfully")
+    except Exception as e:
+        logging.error(f"Error saving retrieved papers: {e}")
 
     logging.info("=== PDF Analysis Script Completed ===")
     logging.info("=== Summarize How Externals Could Help the Team ===")
