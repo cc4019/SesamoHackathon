@@ -88,6 +88,7 @@ def retrieve_local_papers(query, external_papers_path):
     
     pdf_files = list(external_papers_path.glob("*.pdf"))
     paper_texts = []
+    full_paper_texts = []
     paper_paths = []
     # paper_analysis_results = []
     
@@ -96,6 +97,7 @@ def retrieve_local_papers(query, external_papers_path):
         # analysis_results = analyze_document_with_llm(text)
         # paper_analysis_results.append(analysis_results)
         paper_texts.append(text)
+        full_paper_texts.append(extract_text_from_pdf(pdf_file))
         paper_paths.append(pdf_file)
     
     # Call the semanticSimilarity function for the query
@@ -122,7 +124,8 @@ def retrieve_local_papers(query, external_papers_path):
         retrieved_papers.append({
             "title": paper_paths[index].stem,
             "path": paper_paths[index],
-            "snippet": paper_texts[index]  # Include a snippet of the text
+            "snippet": paper_texts[index],  # Include a snippet of the text
+            "full_text": full_paper_texts[index] # Include the full text
         })
     
     return retrieved_papers
@@ -431,19 +434,19 @@ def main():
         # Save full analysis results for summarization
         aggregated_analysis += f"\n\n{analysis_results['full_results']}"
     # Generate a summary of the full analysis results
-    summary = summarize_analysis_with_llm(aggregated_analysis, api_key, 'aggregation of analysis')
+    internal_paper_summary = summarize_analysis_with_llm(aggregated_analysis, api_key, 'aggregation of analysis')
     # Retrieve papers for improvement questions and gaps
     external_papers_path = get_external_papers_path()
     retrieved_papers = []
-    papers = retrieve_local_papers(summary, external_papers_path)
+    papers = retrieve_local_papers(internal_paper_summary, external_papers_path)
     retrieved_papers.extend(papers)
     analysis_results['retrieved_papers'] = retrieved_papers
-    output_file = output_path / f"summarized_analysis.txt"
+    output_file = output_path / f"internal_project_summarized_analysis.txt"
     logging.info(f"Saving analysis results to {output_file}")
     try:
         with open(output_file, 'w', encoding='utf-8', errors='ignore') as f:
             f.write("Summarized ANALYSIS\n")
-            f.write(summary)
+            f.write(internal_paper_summary)
         logging.info("Analysis results saved successfully")
     except Exception as e:
         logging.error(f"Error saving analysis results: {e}")
@@ -461,8 +464,8 @@ def main():
                     # Use LLM to generate the explanation
                     explanation = explain_how_papers_help_with_llm(
                         paper_title=paper['title'], 
-                        snippet=paper['snippet'], 
-                        questions_and_gaps=extract_improvement_questions(summary) + extract_gaps(summary),
+                        snippet=paper['full_text'], # use full text instead of snippet to generate insights on how paper help with llm
+                        questions_and_gaps=extract_improvement_questions(internal_paper_summary) + extract_gaps(internal_paper_summary),
                         api_key=api_key
                     )
                     f.write(f"- {paper['title']}:\n")
@@ -474,29 +477,29 @@ def main():
         logging.error(f"Error saving retrieved papers: {e}")
 
     logging.info("=== PDF Analysis Script Completed ===")
-    logging.info("=== Summarize How Externals Could Help the Team ===")
-    # Summarize all analysis results into one paragraph
-    summary_file = output_path / "summary_of_analysis.txt"
-    logging.info(f"Summarizing analysis results into {summary_file}")
+    # logging.info("=== Summarize How Externals Could Help the Team ===")
+    # # Summarize all analysis results into one paragraph
+    # summary_file = output_path / "summary_of_analysis.txt"
+    # logging.info(f"Summarizing analysis results into {summary_file}")
     
-    try:
-        summary_paragraphs = []
-        for analysis_file in output_path.glob("*_analysis.txt"):
-            with open(analysis_file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                summary_paragraphs.append(content)
+    # try:
+    #     summary_paragraphs = []
+    #     # for analysis_file in output_path.glob("*_analysis.txt"):
+    #     with open(output_path.glob("internal_project_summarized_analysis.txt"), 'r', encoding='utf-8', errors='ignore') as f:
+    #         content = f.read()
+    #         summary_paragraphs.append(content)
         
-        summary_text = "\n\n".join(summary_paragraphs)
-        summary = summarize_analysis_with_llm(summary_text, api_key, mode = 'aggregation of external papers recommendation')
+    #     summary_text = "\n\n".join(summary_paragraphs)
+    #     summary = summarize_analysis_with_llm(summary_text, api_key, mode = 'aggregation of external papers recommendation')
         
-        with open(summary_file, 'w', encoding='utf-8', errors='ignore') as f:
-            f.write("SUMMARY OF ANALYSIS RESULTS\n")
-            f.write("===========================\n\n")
-            f.write(summary_text)
+    #     with open(summary_file, 'w', encoding='utf-8', errors='ignore') as f:
+    #         f.write("SUMMARY OF ANALYSIS RESULTS\n")
+    #         f.write("===========================\n\n")
+    #         f.write(summary)
         
-        logging.info("Summary of analysis results saved successfully")
-    except Exception as e:
-        logging.error(f"Error summarizing analysis results: {e}")
+    #     logging.info("Summary of analysis results saved successfully")
+    # except Exception as e:
+    #     logging.error(f"Error summarizing analysis results: {e}")
 
 if __name__ == "__main__":
     main()
