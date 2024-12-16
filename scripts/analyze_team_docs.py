@@ -1,15 +1,18 @@
 import re
 import json
+import requests
 import logging
 import os
 import sys
 from pathlib import Path
 import PyPDF2
 import spacy
+import xml.etree.ElementTree as ET
 from collections import Counter
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
@@ -221,7 +224,7 @@ def analyze_document_with_llm(text):
 
         4. Literature Review Strategy
         FORMAT AS:
-        Top Five Primary keywords for paper search: [List each term separated by commas]
+        Top Ten Primary keywords for paper search: [List each term separated by commas]
         Note: Return ONLY keyword lists without explanatory sentences or descriptions.
 
         Document text:
@@ -302,6 +305,97 @@ def extract_gaps(analysis):
     logging.debug(f"Extracted {len(gaps)} gaps.")
     return gaps
 
+def extract_keywords(analysis):
+    """Extract keywords from the analysis."""
+    # match = re.search(r"\*\*Top Ten Primary Keywords for Paper Search:\*\* (.+)", analysis)
+    # Enhanced regex patterns for gaps
+    patterns = [
+        r"Top Ten Primary keywords for paper search:\s*(.+)",  # Primary pattern
+        r"Top Ten Primary keywords for paper search:\*\* (.+)",  # Alternate phrasing
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, analysis, re.DOTALL)
+        if match:
+            keywords_text = match.group(1).strip()
+            logging.debug(f"Gaps extracted using pattern: {pattern}")
+            break
+    else:
+        logging.warning("Could not find 'Gaps' section.")
+        return []
+    
+    # Split text into individual gaps and clean up
+    keywords = [k.strip() for k in keywords_text.split(',') if k.strip()]
+
+    # Remove all punctuations (like ".", "*", and similar) from keywords
+    cleaned_keywords = [
+        re.sub(r'[^\w\s]', '', keyword.lstrip('- ').strip()) for keyword in keywords
+    ]
+    logging.debug(f"Extracted {len(cleaned_keywords)} gaps.")
+    return cleaned_keywords
+
+def fetch_arxiv_papers(query, max_results=50, start_index=0):
+    """Fetch papers from arXiv based on a query."""
+    base_url = "http://export.arxiv.org/api/query"
+    query = f"{query}"
+    params = {
+        "search_query": query,
+        "start": start_index,
+        "max_results": max_results,
+        "sortBy": "submittedDate",
+        "sortOrder": "descending",
+    }
+    response = requests.get(base_url, params=params)
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"Error fetching papers: {response.status_code}")
+        return None
+
+def parse_arxiv_response(xml_response):
+    """Parse the arXiv API XML response to extract relevant metadata."""
+    root = ET.fromstring(xml_response)
+    namespace = "{http://www.w3.org/2005/Atom}"
+    papers = []
+
+    for entry in root.findall(f".//{namespace}entry"):
+        paper = {
+            "title": entry.find(f"{namespace}title").text.strip(),
+            "summary": entry.find(f"{namespace}summary").text.strip(),
+            "id": entry.find(f"{namespace}id").text.strip(),
+            "published": entry.find(f"{namespace}published").text.strip(),
+        }
+        papers.append(paper)
+    return papers
+
+def fetch_and_process_papers(keywords, max_results=100):
+    """Fetch and process papers based on keywords."""
+    unique_papers = {}
+    query = " OR ".join([f'all:"{keyword}"' for keyword in keywords])
+    print(query)
+    for start_index in range(0, max_results, 50):  # Paginate up to max_results
+        xml_response = fetch_arxiv_papers(query, max_results=100, start_index=start_index)
+        if xml_response:
+            papers = parse_arxiv_response(xml_response)
+            for paper in papers:
+                unique_papers[paper["id"]] = paper
+
+    print(f"Total unique papers fetched: {len(unique_papers)}")
+
+    all_papers = list(unique_papers.values())
+    return all_papers
+
+def filter_papers_by_recent_time(papers, days=30):
+    """Filter papers published in the past specified number of days."""
+    recent_papers = []
+    current_time = datetime.utcnow()
+    time_threshold = current_time - timedelta(days=days)
+
+    for paper in papers:
+        published_date = datetime.strptime(paper["published"], "%Y-%m-%dT%H:%M:%SZ")
+        if published_date >= time_threshold:
+            recent_papers.append(paper)
+    return recent_papers
+
 def explain_how_papers_help_with_llm(paper_title, snippet, questions_and_gaps, api_key):
     """
     Use an LLM to generate an explanation for how a paper addresses specific questions or gaps.
@@ -335,7 +429,7 @@ def explain_how_papers_help_with_llm(paper_title, snippet, questions_and_gaps, a
         The following snippet is from the paper titled '{paper_title}':
         {snippet}
 
-        Please explain evaluate whether this paper might help address the identified questions and gaps. If specific questions or gaps are directly addressed, mention them. Otherwise, don't include it in the explanation.
+        Please explain evaluate whether this paper might help address the identified questions and gaps. If specific questions or gaps are directly addressed, mention them. Otherwise, make sure to not include the identified questions and gaps in the generated explanation.
         """
         
         # Get the response from LLM
@@ -359,7 +453,7 @@ def summarize_analysis_with_llm(summary_text, api_key, mode):
         if mode == 'aggregation of analysis':
             # Construct the prompt
             prompt = f"""
-            You are a professional researcher tasked with summarizing the analysis results of multiple academic papers.
+            You are a professional researcher tasked with summarizing the content of multiple academic papers.
 
             The following text contains detailed analysis results from multiple papers:
             {summary_text}
@@ -384,6 +478,7 @@ def summarize_analysis_with_llm(summary_text, api_key, mode):
     except Exception as e:
         logging.error(f"Error in LLM processing: {e}")
         return "An error occurred while generating the summary with the LLM."
+    
 def main():
     logging.info("=== Starting PDF Analysis Script ===")
     
@@ -395,6 +490,7 @@ def main():
     logging.info(f"Found {len(pdf_files)} PDF files")
     
     aggregated_analysis = ""
+    total_keywords = set()
     for pdf_file in pdf_files:
         logging.info(f"\nAnalyzing {pdf_file.name}...")
         
@@ -408,6 +504,8 @@ def main():
         # Paper Context Agent
         logging.info("Starting document analysis...")
         analysis_results = analyze_document_with_llm(text)
+        top_keywords = extract_keywords(analysis_results['combined_analysis'])
+        total_keywords = list(set(total_keywords).union(set(top_keywords)))
 
         # Save analysis results as text
         output_file = output_path / f"{pdf_file.stem}_analysis.txt"
@@ -430,15 +528,27 @@ def main():
         
         # Save full analysis results for summarization
         aggregated_analysis += f"\n\n{analysis_results['full_results']}"
+
     # Generate a summary of the full analysis results
     summary = summarize_analysis_with_llm(aggregated_analysis, api_key, 'aggregation of analysis')
+
+    # Retrieve external papers based on the keywords
+    all_external_papers = fetch_and_process_papers(total_keywords)
+
+    # Filter papers based on recent time (by default, 30 days)
+    filtered_papers = filter_papers_by_recent_time(all_external_papers)
+
+    print(f"Total retrieved papers after the filter: {len(filtered_papers)}")
+
     # Retrieve papers for improvement questions and gaps
     external_papers_path = get_external_papers_path()
     retrieved_papers = []
+
+    # TODO: Replace the external_papers_path with the filtered_papers
     papers = retrieve_local_papers(summary, external_papers_path)
     retrieved_papers.extend(papers)
     analysis_results['retrieved_papers'] = retrieved_papers
-    output_file = output_path / f"summarized_analysis.txt"
+    output_file = output_path / f"internal_paper_summarization.txt"
     logging.info(f"Saving analysis results to {output_file}")
     try:
         with open(output_file, 'w', encoding='utf-8', errors='ignore') as f:
@@ -447,7 +557,6 @@ def main():
         logging.info("Analysis results saved successfully")
     except Exception as e:
         logging.error(f"Error saving analysis results: {e}")
-
 
     # Save retrieved papers
     recommendation_file = output_path / f"summarized_external-paper_recommendation.txt"
@@ -475,8 +584,9 @@ def main():
 
     logging.info("=== PDF Analysis Script Completed ===")
     logging.info("=== Summarize How Externals Could Help the Team ===")
+
     # Summarize all analysis results into one paragraph
-    summary_file = output_path / "summary_of_analysis.txt"
+    summary_file = output_path / "external_paper_summarization.txt"
     logging.info(f"Summarizing analysis results into {summary_file}")
     
     try:
@@ -492,7 +602,7 @@ def main():
         with open(summary_file, 'w', encoding='utf-8', errors='ignore') as f:
             f.write("SUMMARY OF ANALYSIS RESULTS\n")
             f.write("===========================\n\n")
-            f.write(summary_text)
+            f.write(summary)
         
         logging.info("Summary of analysis results saved successfully")
     except Exception as e:

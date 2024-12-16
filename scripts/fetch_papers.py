@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 def fetch_arxiv_papers(query, max_results=50, start_index=0):
     """Fetch papers from arXiv based on a query."""
     base_url = "http://export.arxiv.org/api/query"
-    query = f"{query} AND (\"causal inference\" OR \"causal discovery\" OR \"heterogeneous treatment effect\")"
+    # query = f"{query} AND (\"causal inference\" OR \"causal discovery\" OR \"heterogeneous treatment effect\")"
     
     query = f"{query}"
     params = {
@@ -93,66 +93,50 @@ if __name__ == "__main__":
     queries = [
         "abs:(causal OR heterogeneous) AND cat:econ.GN"
     ]
-    # Example usage
-    categories = [
-        "econ.GN",  # General Economics
-        "econ.EM",  # Econometrics
-        "stat.AP",  # Applied Statistics
-        "stat.ME",  # Statistical Methodology
-        "q-fin.EC",  # Quantitative Finance - Economics
-    ]
-    keywords = {
-        "causal_inference": [
-            "causal inference",
-            "heterogeneous treatment effect",
-            "causal discovery",
-            "causal graph",
-            "experiment",
-        ],
-        "marketing_measurement": [
-            "marketing",
-            "marketing measurement",
-            "incrementality",
-            "advertising analytics",
-            "multi-touch attribution",
-            "campaign effectiveness",
-            "customer lifetime value",
-            "predictive analytics",
-            "marketing optimization",
-            "economic modeling",
-            "pricing optimization",
-            "consumer behavior",
-            "demand estimation",
-            "market simulation",
-        ],
-        "streaming_service": [
-            "streaming",
-            "recommendation system",
-            "user engagement",
-            "content personalization",
-        ],
-    }
 
+    keywords = [
+            "Multimodal AI",
+            "Healthcare Applications",
+            "Shapley Values",
+            "Predictive Analytics",
+            "Holistic AI in Medicine"      
+    ]
+    keywords = [
+        'Conversational AI', 
+        'Natural Language Processing', 
+        'Mental Health', 
+        'Interdisciplinary Collaboration.', 
+        'Medical Text Summarization', 
+        'Large Language Models', 
+        'Digital Health', 
+        'Patient Engagement',
+          'Ethical Considerations', 
+          'AI in Healthcare']
     unique_papers = {}
-    for category in categories:
-        query = f"cat:{category}"
-        for start_index in range(0, 100, 50):  # Paginate up to 100 results
-            xml_response = fetch_arxiv_papers(query, max_results=50, start_index=start_index)
-            if xml_response:
-                papers = parse_arxiv_response(xml_response)
-                for paper in papers:
-                    unique_papers[paper["id"]] = paper
+    
+    query = " OR ".join([f'all:"{keyword}"' for keyword in keywords])
+
+    # query = 'all:"** multimodal AI, healthcare applications, predictive modeling, electronic health records, Shapley values, data fusion, machine learning, clinical decision-making, patient outcomes, AI interpretability."'
+    # query = 'all:"Healthcare Technology." OR all:"Patient Engagement" OR all:"Ethical Considerations" OR all:"Conversational AI" OR all:"** \nLarge Language Models" OR all:"Natural Language Processing" OR all:"Mental Health" OR all:"Chatbots" OR all:"Unstructured Data" OR all:"Digital Health"'
+    # print(query)
+    for start_index in range(0, 100, 50):  # Paginate up to 100 results
+        xml_response = fetch_arxiv_papers(query, max_results=50, start_index=start_index)
+        if xml_response:
+            papers = parse_arxiv_response(xml_response)
+            for paper in papers:
+                unique_papers[paper["id"]] = paper
 
     print(f"Total unique papers fetched: {len(unique_papers)}")
 
     all_papers = list(unique_papers.values())
+    all_papers = {'healthcare': all_papers}
 
-    topic_filtered_papers = filter_papers_by_multiple_topics(all_papers, keywords)
+    # topic_filtered_papers = filter_papers_by_multiple_topics(all_papers, keywords)
 
-    for topic, papers in topic_filtered_papers.items():
+    for topic, papers in all_papers.items():
         print(f"\nTop Papers for {topic.replace('_', ' ').title()}:")
         
-        days_filter = 90 if topic == "marketing_measurement" else 7
+        days_filter = 90 if topic == "marketing_measurement" else 30
         papers = filter_papers_by_recent_time(papers, days=days_filter)
 
         if not papers:
@@ -160,7 +144,7 @@ if __name__ == "__main__":
             continue
 
         ranked_papers = rank_papers_by_downloads(papers)
-        top_papers = ranked_papers[:5]
+        top_papers = ranked_papers[:50]
 
         for idx, paper in enumerate(top_papers):
             summary = generate_summary(paper)  # Generate a summary for each paper
