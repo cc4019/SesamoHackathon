@@ -227,7 +227,7 @@ def analyze_document_with_llm(text):
 
         4. Literature Review Strategy
         FORMAT AS:
-        Top Ten Primary keywords for paper search: [List each term separated by commas]
+        Top Five Primary keywords for paper search: [List each term separated by commas]
         Note: Return ONLY keyword lists without explanatory sentences or descriptions.
 
         Document text:
@@ -310,31 +310,26 @@ def extract_gaps(analysis):
 
 def extract_keywords(analysis):
     """Extract keywords from the analysis."""
-    # match = re.search(r"\*\*Top Ten Primary Keywords for Paper Search:\*\* (.+)", analysis)
-    # Enhanced regex patterns for gaps
-    patterns = [
-        r"Top Ten Primary keywords for paper search:\s*(.+)",  # Primary pattern
-        r"Top Ten Primary keywords for paper search:\*\* (.+)",  # Alternate phrasing
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, analysis, re.DOTALL)
-        if match:
-            keywords_text = match.group(1).strip()
-            logging.debug(f"Gaps extracted using pattern: {pattern}")
-            break
+    keyword_section = re.search(
+        r"(?:\*\*)?Top Five Primary Keywords for Paper Search:(?:\*\*)?\s*(.*)", 
+        analysis, 
+        re.DOTALL | re.IGNORECASE
+    )
+    if keyword_section:
+        keywords_text = keyword_section.group(1).strip()
+        
+        # Handle the list format with dashes (-) or commas
+        if ',' in keywords_text:
+            keywords = [k.strip() for k in keywords_text.split(",") if k.strip()]
+        else:
+            # Handle cases where keywords are listed with dashes (-)
+            keywords = re.findall(r"-\s*(.+)", keywords_text)
+            
+        return keywords
     else:
-        logging.warning("Could not find 'Gaps' section.")
-        return []
+        logging.error("Could not find 'Keywords' section.")
+        raise ValueError("Keywords section not found in the analysis.")
     
-    # Split text into individual gaps and clean up
-    keywords = [k.strip() for k in keywords_text.split(',') if k.strip()]
-
-    # Remove all punctuations (like ".", "*", and similar) from keywords
-    cleaned_keywords = [
-        re.sub(r'[^\w\s]', '', keyword.lstrip('- ').strip()) for keyword in keywords
-    ]
-    logging.debug(f"Extracted {len(cleaned_keywords)} gaps.")
-    return cleaned_keywords
 
 def fetch_arxiv_papers(query, max_results=50, start_index=0):
     """Fetch papers from arXiv based on a query."""
@@ -537,6 +532,8 @@ def main():
 
     # Retrieve external papers based on the keywords
     all_external_papers = fetch_and_process_papers(total_keywords)
+    if not all_external_papers:
+        raise ValueError("No external papers found based on the provided keywords.")
     print(f"Total retrieved papers before the filter: {len(all_external_papers)}")
 
     # Filter papers based on recent time (by default, 30 days)
