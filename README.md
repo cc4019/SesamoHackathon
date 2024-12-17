@@ -19,15 +19,15 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
      - **Research Gaps & Extension Opportunities**
      - **Literature Review Strategy**: Keywords for paper search
    - Highlights **new information** compared to the previous week’s documents.
+   - Generates a set of optimized, refined **keywords** for paper retrieval.
 
 3. **Summary Project Context Agent**
    - Aggregates individual summaries while avoiding redundant insights.
-   - Generates a set of optimized, refined **keywords** for paper retrieval.
 
 4. **Rough Paper Retrieval Agent**
    - Fetches the latest academic papers (e.g., published in the past month) using the refined keywords.
    - Includes a **scoring mechanism** for relevance, based on metrics such as:
-     - Citation count
+     - Download count / Citation count (For latest papers maybe only using download count )
      - Abstract similarity
 
 5. **Granular Paper Retrieval Agent**
@@ -36,11 +36,8 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
      - **Highly Relevant**
      - **Moderately Relevant**
 
-6. **Feedback Agent**
-   - Annotates retrieved papers with **actionable insights** based on the final summaries.
-   - Recommends **follow-up actions**, such as:
-     - Suggested reading order
-     - Collaboration opportunities
+6. **Counseling Agent**
+   - Summarize how each selected papers could help improve the projects
 
 7. **Final Output**
    - A clear, categorized report that includes:
@@ -49,10 +46,6 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
      - Refined keywords for literature search
      - Annotated external papers with actionable insights and tiered relevance levels
     
-### Agents in Each Process
-<img width="870" alt="image" src="https://github.com/user-attachments/assets/f857e036-01e6-4213-8a5d-1b168d8ffe9e" />
-
----
 
 ## Features
 - **Automated Document Analysis**: Extracts and summarizes key research points from internal documents.
@@ -64,21 +57,8 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
 - **Flexible Scheduling**: Runs daily, weekly, or monthly depending on team needs.
 
 ## Workflow Diagram
-```
-[Input] Internal Documents (Centralized Folder)
-   |
-   v
-[Project Context Agent] ---> [Summary Project Context Agent]
-   |                                  |
-   v                                  v
-[Rough Paper Retrieval Agent]      [Summarized Research Context]
-   |                                  |
-   v                                  v
-[Granular Paper Retrieval Agent] ---> [Feedback Agent]
-   |
-   v
-[Final Output: Summarized Context + Annotated Papers + Actionable Insights]
-```
+![image](https://github.com/user-attachments/assets/e17aa01c-1c9d-495d-a820-266f3deca4c5)
+
 
 ## Installation
 1. **Clone the Repository**:
