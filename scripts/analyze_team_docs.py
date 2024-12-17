@@ -1,4 +1,5 @@
 import re
+import time
 import json
 import requests
 import logging
@@ -85,53 +86,70 @@ def extract_text_from_pdf(pdf_path):
     logging.debug(f"Total text extracted: {len(text)} chars")
     return text
 
-def retrieve_local_papers(query, external_papers_path):
-    """Retrieve papers from the local external papers folder based on the query."""
+def retrieve_top_k_relevant_arxiv_papers(query, filtered_papers_lst,external_papers_path,top_k=3):
+    """Retrieve papers from the relevant Arxiv Papers."""
     model = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    pdf_files = list(external_papers_path.glob("*.pdf"))
-    paper_texts = []
-    full_paper_texts = []
-    paper_paths = []
-    # paper_analysis_results = []
-    
-    for pdf_file in pdf_files:
-        text = extract_text_from_pdf(pdf_file)[:1000]  # Limit to first 500 chars for embedding
-        # analysis_results = analyze_document_with_llm(text)
-        # paper_analysis_results.append(analysis_results)
-        paper_texts.append(text)
-        full_paper_texts.append(extract_text_from_pdf(pdf_file))
-        paper_paths.append(pdf_file)
-    
-    # Call the semanticSimilarity function for the query
-    query_embedding = model.encode([query])[0]
-    
-    # Call the semanticSimilarity function for each paper text
-    paper_embeddings = []
-    for text in paper_texts:
-        embedding = model.encode([text])[0]
-        paper_embeddings.append(embedding)
-    
-    # Compute similarity scores using cosine similarity
-    cosine_similarities = []
-    for paper_embedding in paper_embeddings:
-        similarity = cosine_similarity([query_embedding], [paper_embedding])[0][0]
-        cosine_similarities.append(similarity)
 
-    # Get the top k most similar papers
-    k = 3
-    similar_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:3]
+    paper_abstract_lst = [paper['summary'] for paper in filtered_papers_lst]
+    paper_embeddings = [model.encode(abstract) for abstract in paper_abstract_lst]
+
+    # Compute query embedding
+    query_embedding = model.encode(query)
+
+    # Compute cosine similarity scores
+    cosine_similarities = [
+        cosine_similarity([query_embedding], [embedding])[0][0]
+        for embedding in paper_embeddings
+    ]
+
+    # Get indices of the top-k most similar papers
+    top_k_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:top_k]
+
     retrieved_papers = []
+    MAX_RETRIES = 5
 
-    for index in similar_indices:
+    for idx in top_k_indices:
+        paper = filtered_papers_lst[idx]
+        
+        # Convert abstract page URL to PDF download URL
+        pdf_url = paper['id'].replace("abs", "pdf")
+        safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', paper['title']).replace(" ", "_")
+        pdf_path = Path(external_papers_path) / f"{safe_title}.pdf"
+
+        # Download the PDF with retry on rate limit
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.get(pdf_url)
+                if response.status_code == 200:
+                    print(f"PDF '{safe_title}' downloaded successfully.")
+                    with open(pdf_path, "wb") as file:
+                        file.write(response.content)
+                    break  # Success, exit retry loop
+                elif response.status_code == 429:
+                    print("Rate limit hit. Retrying in 1 second...")
+                    time.sleep(1)
+                else:
+                    print(f"Failed to download PDF. HTTP Status: {response.status_code}")
+                    break
+            except Exception as e:
+                print(f"Error downloading PDF: {e}")
+                time.sleep(1)
+        else:
+            print(f"Failed to download PDF '{safe_title}' after multiple attempts.")
+            continue  # Skip to the next paper if retries are exhausted
+        # Extract full text from the downloaded PDF
+        full_text = extract_text_from_pdf(pdf_path)
+
+        # Append the relevant paper details
         retrieved_papers.append({
-            "title": paper_paths[index].stem,
-            "path": paper_paths[index],
-            "snippet": paper_texts[index],  # Include a snippet of the text
-            "full_text": full_paper_texts[index] # Include the full text
+            "title": paper['title'],
+            "path": pdf_path,
+            "snippet": paper['summary'],  # Include a 500-character snippet of the summary
+            "full_text": full_text  # Include the extracted full text
         })
-    
+
     return retrieved_papers
+
 
 # def retrieve_local_papers(query, external_papers_path):
 #     """Retrieve papers from the local external papers folder based on the query."""
@@ -227,7 +245,7 @@ def analyze_document_with_llm(text):
 
         4. Literature Review Strategy
         FORMAT AS:
-        Top Five Primary keywords for paper search: [List each term separated by commas]
+        Top Five Primary keywords for paper search: keyword1, keyword2, keyword3, keyword4, keyword5
         Note: Return ONLY keyword lists without explanatory sentences or descriptions.
 
         Document text:
@@ -546,7 +564,7 @@ def main():
     retrieved_papers = []
 
     # TODO: Replace the external_papers_path with the filtered_papers
-    papers = retrieve_local_papers(internal_paper_summary, external_papers_path)
+    papers = retrieve_top_k_relevant_arxiv_papers(internal_paper_summary, filtered_papers,external_papers_path,3)
     retrieved_papers.extend(papers)
     
     analysis_results['retrieved_papers'] = retrieved_papers
