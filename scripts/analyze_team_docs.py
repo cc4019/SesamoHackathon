@@ -102,6 +102,8 @@ def retrieve_top_k_relevant_arxiv_papers(query, filtered_papers_lst,external_pap
         for embedding in paper_embeddings
     ]
 
+    print("Top-{top_k} cosine similarity scores:", sorted(cosine_similarities,reverse=True)[:top_k])
+
     # Get indices of the top-k most similar papers
     top_k_indices = sorted(range(len(cosine_similarities)), key=lambda i: cosine_similarities[i], reverse=True)[:top_k]
 
@@ -144,7 +146,7 @@ def retrieve_top_k_relevant_arxiv_papers(query, filtered_papers_lst,external_pap
         retrieved_papers.append({
             "title": paper['title'],
             "path": pdf_path,
-            "snippet": paper['summary'],  # Include a 500-character snippet of the summary
+            "snippet": paper['summary'], 
             "full_text": full_text  # Include the extracted full text
         })
 
@@ -400,7 +402,7 @@ def fetch_and_process_papers(keywords, max_results=200):
     all_papers = list(unique_papers.values())
     return all_papers
 
-def filter_papers_by_recent_time(papers, days=30):
+def filter_papers_by_recent_time(papers, days=365):
     """Filter papers published in the past specified number of days."""
     recent_papers = []
     current_time = datetime.utcnow()
@@ -519,10 +521,20 @@ def main():
         
         # Paper Context Agent
         logging.info("Starting document analysis...")
-        analysis_results = analyze_document_with_llm(text)
-        top_keywords = extract_keywords(analysis_results['combined_analysis'])
-        total_keywords = list(set(total_keywords).union(set(top_keywords)))
+        
+        MAX_TRY = 3
+        for i in range(MAX_TRY):
+            try:
+                analysis_results = analyze_document_with_llm(text)
+                top_keywords = extract_keywords(analysis_results["full_results"])
+                break
+            except Exception as e:
+                continue
+        else:
+            logging.error(f"Failed to analyze document {pdf_file.name} after {MAX_TRY} attempts.")
 
+        total_keywords = list(set(total_keywords).union(set(top_keywords)))
+        print(total_keywords)
         # Save analysis results as text
         output_file = output_path / f"{pdf_file.stem}_analysis.txt"
         logging.info(f"Saving analysis results to {output_file}")
