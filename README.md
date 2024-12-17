@@ -5,6 +5,9 @@ This repository contains a **multi-agent workflow** designed to function as a *v
 ## Overview
 The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly basis to streamline knowledge synthesis and research strategy for teams. 
 
+### Overall Process
+<img width="922" alt="image" src="https://github.com/user-attachments/assets/17eb03e8-7821-4cf1-b22a-849f313265bd" />
+
 ### Key Workflow Steps
 
 1. **Centralized Upload Step**
@@ -28,6 +31,10 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
    - Includes a **scoring mechanism** for relevance, based on metrics such as:
      - Citation count
      - Abstract similarity
+
+### Agents in Each Process
+<img width="870" alt="image" src="https://github.com/user-attachments/assets/f857e036-01e6-4213-8a5d-1b168d8ffe9e" />
+
 
 5. **Granular Paper Retrieval Agent**
    - Matches paper embeddings against internal team documents for deeper **context alignment**.
