@@ -402,7 +402,7 @@ def fetch_and_process_papers(keywords, max_results=200):
     all_papers = list(unique_papers.values())
     return all_papers
 
-def filter_papers_by_recent_time(papers, days=365):
+def filter_papers_by_recent_time(papers, days=100):
     """Filter papers published in the past specified number of days."""
     recent_papers = []
     current_time = datetime.utcnow()
