@@ -5,6 +5,7 @@ import requests
 import logging
 import os
 import sys
+import ast
 from pathlib import Path
 import PyPDF2
 import spacy
@@ -86,7 +87,7 @@ def extract_text_from_pdf(pdf_path):
     logging.debug(f"Total text extracted: {len(text)} chars")
     return text
 
-def retrieve_top_k_relevant_arxiv_papers(query, filtered_papers_lst,external_papers_path,top_k=3):
+def retrieve_top_k_relevant_arxiv_papers(query, filtered_papers_lst, external_papers_path, top_k=3):
     """Retrieve papers from the relevant Arxiv Papers."""
     model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -255,11 +256,44 @@ def analyze_document_with_llm(text):
 
         Please support your analysis with specific examples and quotes from the text where relevant.
         """
+
+        keyword_prompt =         llm = ChatOpenAI(
+            api_key=api_key,
+            model="gpt-4o-mini", 
+            temperature=0.7
+        )
         
+        # text_splitter = RecursiveCharacterTextSplitter(
+        #     chunk_size=2000,
+        #     chunk_overlap=200
+        # )
+        # chunks = text_splitter.split_text(text)
+        # logging.debug(f"Split text into {len(chunks)} chunks")
+        
+        # combined_text = "\n".join(chunks)
+
+        keyword_prompt = """
+        Please analyze this academic paper excerpt and provide Top Five Primary keywords for paper search. Note: Return ONLY keyword lists without explanatory sentences or descriptions.
+
+        FORMAT AS:
+        [
+        "keyword1", 
+        "keyword2", 
+        "keyword3", 
+        "keyword4", 
+        "keyword5"
+        ]
+
+        Document text:
+        {text}
+        """
+    
         try:
             safe_text = text.encode('utf-8', 'ignore').decode('utf-8')
             response = llm.invoke(prompt.format(text=safe_text))
             combined_analysis = response.content
+            keyword_response = llm.invoke(keyword_prompt.format(text=safe_text))
+            keyword_analysis = keyword_response.content
         except Exception as e:
             logging.error(f"Error in LLM analysis: {e}")
             logging.error("This might be due to API key issues or rate limiting")
@@ -272,6 +306,7 @@ def analyze_document_with_llm(text):
         analysis_results = {
             "full_results": response.content,
             "combined_analysis": combined_analysis,
+            "keywords": ast.literal_eval(keyword_analysis),
             # "improvement_questions": improvement_questions,
             # "gaps": gaps,
         }
@@ -526,7 +561,7 @@ def main():
         for i in range(MAX_TRY):
             try:
                 analysis_results = analyze_document_with_llm(text)
-                top_keywords = extract_keywords(analysis_results["full_results"])
+                top_keywords = analysis_results["keywords"]
                 break
             except Exception as e:
                 continue
@@ -576,7 +611,7 @@ def main():
     retrieved_papers = []
 
     # TODO: Replace the external_papers_path with the filtered_papers
-    papers = retrieve_top_k_relevant_arxiv_papers(internal_paper_summary, filtered_papers,external_papers_path,3)
+    papers = retrieve_top_k_relevant_arxiv_papers(internal_paper_summary, filtered_papers, external_papers_path, 3)
     retrieved_papers.extend(papers)
     
     analysis_results['retrieved_papers'] = retrieved_papers
