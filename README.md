@@ -4,6 +4,7 @@ This repository contains a **multi-agent workflow** designed to function as a *v
 
 ## Overview
 The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly basis to streamline knowledge synthesis and research strategy for teams. 
+
 <img width="922" alt="image" src="https://github.com/user-attachments/assets/17eb03e8-7821-4cf1-b22a-849f313265bd" />
 
 ### Key Workflow Steps
