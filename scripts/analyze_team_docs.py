@@ -36,7 +36,13 @@ def get_project_paths():
     script_dir = script_path.parent
     project_root = script_dir.parent
     docs_path = project_root / "data" / "team_docs"
+    # check if the docs path exists, if not create the folder
+    if not docs_path.exists():
+        os.makedirs(docs_path)
     output_path = project_root / "data" / "analysis_results"
+    # check if the output path exists, if not create the folder
+    if not output_path.exists():
+        os.makedirs(output_path)
     
     logging.debug(f"Script location: {script_path}")
     logging.debug(f"Project root: {project_root}")
@@ -53,6 +59,9 @@ def get_external_papers_path():
     script_dir = script_path.parent
     project_root = script_dir.parent
     external_papers_path = project_root / "data" / "external-paper"
+    # check if the external papers path exists, if not create the folder
+    if not external_papers_path.exists():
+        os.makedirs(external_papers_path)
     
     logging.debug(f"External papers path: {external_papers_path}")
     logging.debug(f"External papers path exists: {external_papers_path.exists()}")

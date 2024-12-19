@@ -16,6 +16,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'data/team_docs'
+# if directory does not exist, create it
+if not os.path.exists(app.config['UPLOAD_FOLDER']):
+    os.makedirs(app.config['UPLOAD_FOLDER'])
 app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
 
 def allowed_file(filename):
