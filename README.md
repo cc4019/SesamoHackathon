@@ -4,6 +4,7 @@ This repository contains a **multi-agent workflow** designed to function as a *v
 
 ## Overview
 The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly basis to streamline knowledge synthesis and research strategy for teams. 
+
 <img width="922" alt="image" src="https://github.com/user-attachments/assets/17eb03e8-7821-4cf1-b22a-849f313265bd" />
 
 ### Key Workflow Steps
@@ -61,30 +62,60 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
 
 
 ## Installation
-1. **Clone the Repository**:
+1. **Create a Virtual Environment**:
+   Run the following command to create a virtual environment named `venv`:
    ```bash
-   git clone https://github.com/yourusername/virtual-scholar-agent.git
-   cd virtual-scholar-agent
+   python3 -m venv venv
    ```
-2. **Install Dependencies**:
-   Ensure you have Python installed (>=3.8). Install required libraries:
+
+2. **Activate the Virtual Environment**:
+   After creating the virtual environment, activate it using the following command:
+
+   On macOS and Linux:
+   ```bash
+   source venv/bin/activate
+   ```
+   On Windows:
+   ```
+   .\venv\Scripts\activate
+   ```
+
+3. **Install the Required Packages**:
+   Once the virtual environment is activated, install the required packages using the `requirements.txt` file:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Set Up Centralized Folder**:
-   Create a directory for internal documents and configure it in the system's settings.
+4. **Set Up Centralized Folder**:
+   Upload team documents to the `data/team_docs/` directory for analysis.
 
-4. **Configure API Keys**:
+5. **Configure API Keys**:
    - For paper retrieval, integrate APIs such as Semantic Scholar, arXiv, or other academic databases.
-   - Update `config.json` with relevant API keys.
+   - Add your **OpenAI API Key** to a `.env` file in the project directory. The `.env` file should include the following:
+     ```plaintext
+     OPENAI_API_KEY=your_openai_api_key_here
+     ```
+   - Ensure that the system reads this key during execution.
 
 ## Usage
-Run the main workflow script:
-```bash
-python main.py
-```
+- **Run the Main Application**:
+   To run the main application with a UI, use the following command:
+   ```bash
+   python app.py
+   ```
+   After running, access the application in your browser at: [http://127.0.0.1:5000](http://127.0.0.1:5000).
 
+   - Upload your files via the UI.
+   - Click on **'Start Analysis'** to begin the analysis.
+   - Once the analysis is complete, download the results directly from the UI.
+   - Use the chatbot feature to ask questions about internal or external papers.
+
+- **Run Offline Analysis**:
+   To analyze team documents offline without the UI, run:
+   ```bash
+   python scripts/analyze_team_docs.py
+   ```
+   
 The system will:
 - Summarize internal documents.
 - Retrieve relevant papers.
