@@ -59,9 +59,7 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
 
 ## Workflow Diagram
 
-![image](https://github.com/user-attachments/assets/129a8589-12ee-45b0-8e32-6ac584b8efbb)
-
-
+![image](https://github.com/user-attachments/assets/9f415015-c86d-4870-939d-aa5672448c76)
 
 ## Installation
 1. **Create a Virtual Environment**:
