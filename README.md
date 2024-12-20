@@ -58,7 +58,9 @@ The **Virtual Scholar Agent System** operates on a daily, weekly, or monthly bas
 - **Flexible Scheduling**: Runs daily, weekly, or monthly depending on team needs.
 
 ## Workflow Diagram
-![image](https://github.com/user-attachments/assets/e17aa01c-1c9d-495d-a820-266f3deca4c5)
+
+![image](https://github.com/user-attachments/assets/129a8589-12ee-45b0-8e32-6ac584b8efbb)
+
 
 
 ## Installation
