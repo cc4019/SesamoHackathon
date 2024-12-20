@@ -1,4 +1,4 @@
-# SesamoHackathon -- Virtual Scholar Agent System
+# Sesamo -- Virtual Scholar Agent System
 
 This repository contains a **multi-agent workflow** designed to function as a *virtual scholar agent*. The system automates summarizing team documents, analyzing research opportunities, retrieving relevant academic papers, and generating actionable insights for research teams.
 
