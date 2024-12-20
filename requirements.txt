@@ -7,3 +7,4 @@ python-dotenv==1.0.1
 scikit-learn==1.6.0
 sentence-transformers==3.3.1
 Flask==3.1.0
+langchain-community==0.3.13

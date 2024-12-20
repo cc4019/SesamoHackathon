@@ -15,7 +15,7 @@
             background-color: #f8f9fa;
         }
         .container {
-            max-width: 600px;
+            max-width: 1200px; /* Increased width */
         }
         .header {
             background-color: #343a40;
@@ -59,6 +59,8 @@
             background-color: white;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             display: none;
+            overflow: auto;
+            resize: both; /* Allow resizing */
         }
         .chatbot-header {
             background-color: #343a40;
@@ -67,6 +69,7 @@
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
             text-align: center;
+            cursor: move; /* Indicate draggable area */
         }
         .chatbot-body {
             padding: 10px;
@@ -76,14 +79,39 @@
         .chatbot-footer {
             padding: 10px;
             border-top: 1px solid #ccc;
+            display: flex;
+            align-items: center;
         }
         .chatbot-footer input {
-            width: calc(100% - 50px);
-            padding: 5px;
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            margin-right: 10px;
         }
         .chatbot-footer button {
-            width: 40px;
-            padding: 5px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .chatbot-footer button:hover {
+            background-color: #0056b3;
+        }
+        .waiting-image {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        .waiting-image img {
+            max-width: 150px; /* Smaller size */
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
         }
     </style>
 </head>
@@ -115,8 +143,11 @@
                 <div class="progress">
                     <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
                 </div>
-                <div class="text-center mt-4">
-                    <img src="{{ url_for('static', filename='Sesamo_Waiting.webp') }}" alt="Cute Dog and Cat" class="img-fluid">
+                <div class="waiting-image" id="waiting-image">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="sr-only">Loading...</span>
+                    </div>
+                    <img src="{{ url_for('static', filename='Sesamo_Waiting.webp') }}" alt="Cute Dog and Cat">
                 </div>
                 <div class="result mt-4">
                     <h3>Analysis Results</h3>
@@ -142,10 +173,12 @@
         document.getElementById('analysis-form').addEventListener('submit', function(event) {
             event.preventDefault();
             document.querySelector('.progress').style.display = 'block';
+            document.getElementById('waiting-image').style.display = 'block';
             fetch('/start_analysis', {
                 method: 'POST'
             }).then(response => response.text()).then(data => {
                 document.querySelector('.progress').style.display = 'none';
+                document.getElementById('waiting-image').style.display = 'none';
                 document.querySelector('.result').style.display = 'block';
                 document.getElementById('result-content').textContent = data;
                 document.querySelector('.chatbot').style.display = 'block';
@@ -154,7 +187,14 @@
             });
         });
 
-        document.getElementById('chatbot-send').addEventListener('click', function() {
+        document.getElementById('chatbot-send').addEventListener('click', sendMessage);
+        document.getElementById('chatbot-input').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        function sendMessage() {
             const input = document.getElementById('chatbot-input');
             const message = input.value;
             if (message.trim() !== '') {
@@ -179,7 +219,34 @@
                     console.error('Error:', error);
                 });
             }
+        }
+
+        // Drag functionality
+        const chatbot = document.querySelector('.chatbot');
+        const chatbotHeader = document.querySelector('.chatbot-header');
+        let isDragging = false;
+        let offsetX, offsetY;
+
+        chatbotHeader.addEventListener('mousedown', function(event) {
+            isDragging = true;
+            offsetX = event.clientX - chatbot.getBoundingClientRect().left;
+            offsetY = event.clientY - chatbot.getBoundingClientRect().top;
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
         });
+
+        function onMouseMove(event) {
+            if (isDragging) {
+                chatbot.style.left = `${event.clientX - offsetX}px`;
+                chatbot.style.top = `${event.clientY - offsetY}px`;
+            }
+        }
+
+        function onMouseUp() {
+            isDragging = false;
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        }
     </script>
 </body>
 </html>
