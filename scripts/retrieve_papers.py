@@ -3,7 +3,7 @@ import logging
 import re
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, TypedDict, Literal
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -83,113 +83,6 @@ class GraphState(TypedDict):
     avg_score: float
     need_refinement: bool
 
-# ArXiv search tool
-class ArxivSearchTool(BaseTool):
-    """Tool for searching ArXiv papers using the official API"""
-    name: str = "search_arxiv"
-    description: str = """
-    Search ArXiv for academic papers. 
-    Input should be a search query string.
-    Returns a JSON object with a "papers" array containing paper details.
-    """
-
-    def __init__(self):
-        super().__init__()
-        logger.info("ArxivSearchTool initialized with direct API access")
-
-    def _run(self, query: str, max_results: int = 10) -> str:
-        """Execute the ArXiv search using the official API"""
-        import requests
-        import xml.etree.ElementTree as ET
-        from datetime import datetime
-        
-        # Use the URL directly here instead of as a class attribute
-        base_url = "http://export.arxiv.org/api/query"
-        
-        logger.info(f"ArxivSearchTool executing query: {query}")
-        
-        # Remove quotes for the actual API call
-        clean_query = query.strip('"')
-        
-        # Prepare the API request
-        params = {
-            'search_query': clean_query,
-            'start': 0,
-            'max_results': max_results,
-            'sortBy': 'submittedDate',
-            'sortOrder': 'descending'
-        }
-        
-        # Make the API request
-        response = requests.get(base_url, params=params)
-        
-        if response.status_code != 200:
-            error_msg = f"ArXiv API returned status code {response.status_code}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Parse the XML response
-        root = ET.fromstring(response.content)
-        
-        # Define namespaces
-        namespaces = {
-            'atom': 'http://www.w3.org/2005/Atom',
-            'arxiv': 'http://arxiv.org/schemas/atom'
-        }
-        
-        results = []
-        
-        # Extract entries (papers)
-        entries = root.findall('.//atom:entry', namespaces)
-        
-        for entry in entries:
-            try:
-                # Extract paper details
-                title = entry.find('./atom:title', namespaces).text.strip()
-                
-                # Get ID and convert to arxiv ID format
-                id_url = entry.find('./atom:id', namespaces).text
-                arxiv_id = id_url.split('/abs/')[-1]
-                
-                # Get summary/abstract
-                summary = entry.find('./atom:summary', namespaces).text.strip()
-                
-                # Get authors
-                author_elements = entry.findall('./atom:author/atom:name', namespaces)
-                authors = [author.text for author in author_elements]
-                
-                # Get published date
-                published_text = entry.find('./atom:published', namespaces).text
-                try:
-                    published_date = datetime.strptime(published_text, "%Y-%m-%dT%H:%M:%SZ")
-                    published = published_date.strftime("%Y-%m-%d")
-                except:
-                    published = published_text
-                
-                paper = {
-                    "title": title,
-                    "arxiv_id": arxiv_id,
-                    "abstract": summary,
-                    "authors": authors,
-                    "published": published
-                }
-                
-                results.append(paper)
-                logger.info(f"Found paper: {paper['title']} ({paper['arxiv_id']})")
-                
-            except Exception as e:
-                logger.warning(f"Error processing paper from API: {str(e)}")
-                continue
-        
-        if not results:
-            error_msg = f"No papers found for query: {query}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        json_results = json.dumps({"papers": results}, indent=2)
-        logger.info(f"Returning {len(results)} papers")
-        return json_results
-
 @traceable(run_type="chain")
 def load_analysis_results():
     """Load and process analysis results from JSON"""
@@ -260,15 +153,17 @@ def extract_json(text: str) -> dict:
 # Node functions
 @traceable(run_type="chain")
 def initialize(state: GraphState) -> GraphState:
-    """Initialize the workflow state with analysis context"""
-    analysis_points = state["analysis_points"]
+    """Initialize the workflow state"""
+    # Create context from analysis points
+    analysis_points = state.get("analysis_points", {})
     context = create_context_from_analysis(analysis_points)
     
-    # Update state
-    state["context"] = context
-    logger.info("Initialized workflow with analysis context")
+    # Update state with context
+    new_state = dict(state)
+    new_state["context"] = context
     
-    return state
+    logger.info("Initialized workflow state with context")
+    return new_state
 
 @traceable(run_type="agent")
 def paper_search_agent(state: GraphState) -> GraphState:
@@ -276,13 +171,16 @@ def paper_search_agent(state: GraphState) -> GraphState:
     context = state["context"]
     analysis_points = state["analysis_points"]
     
+    # Get date filter from state or use default
+    date_filter = state.get("date_filter", "last_month")
+    
     # Step 1: Generate optimized search queries using LLM
     logger.info("Generating search queries with LLM")
     search_queries = generate_search_queries(context, analysis_points)
     
-    # Step 2: Execute searches and collect papers
-    logger.info(f"Executing {len(search_queries)} search queries")
-    papers = execute_paper_searches(search_queries)
+    # Step 2: Execute searches and collect papers with date filter
+    logger.info(f"Executing {len(search_queries)} search queries with {date_filter} filter")
+    papers = execute_paper_searches(search_queries, date_filter=date_filter)
     
     # Step 3: Update state with retrieved papers
     # If we already have papers, append new ones without duplicates
@@ -295,7 +193,7 @@ def paper_search_agent(state: GraphState) -> GraphState:
             combined_papers.append(paper)
     
     state["retrieved_papers"] = combined_papers
-    logger.info(f"Retrieved {len(papers)} new papers, total: {len(combined_papers)}")
+    logger.info(f"Retrieved {len(papers)} new papers with {date_filter} filter, total: {len(combined_papers)}")
     
     return state
 
@@ -423,269 +321,391 @@ def evaluate_papers(state: GraphState) -> GraphState:
         scores = [eval_data.get("overall_score", 0.0) for eval_data in all_evaluations]
         avg_score = sum(scores) / len(scores) if scores else 0.0
         
+        # Make sure avg_score is a float
+        avg_score = float(avg_score)
+        
+        # Update state with average score
         state["avg_score"] = avg_score
-        state["need_refinement"] = avg_score < 0.6
         
-        logger.info(f"Evaluated {len(all_evaluations)} papers with average score {avg_score:.2f}")
+        # Log average score
+        logger.info(f"Average paper relevance score: {avg_score:.2f}")
         
+        # Determine if refinement is needed
+        need_refinement = avg_score < 0.6
+        state["need_refinement"] = need_refinement
+        
+        if need_refinement:
+            logger.info("Low average score, refinement may be needed")
+        else:
+            logger.info("Satisfactory average score, no refinement needed")
+        
+        return state
     except Exception as e:
         logger.error(f"Error processing evaluation results: {str(e)}")
-        state["paper_evaluations"] = []
-        state["avg_score"] = 0.0
+        # Set default values in case of error
+        state["paper_evaluations"] = all_evaluations
+        state["avg_score"] = 0.5  # Default to middle score
         state["need_refinement"] = True
+        return state
+
+@traceable(run_type="chain")
+def format_and_save_results(state: GraphState) -> GraphState:
+    """Format and save the final results"""
+    # Create output directory if it doesn't exist
+    output_dir = Path("scripts/data/paper_retrieval_results")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Extract data from state
+    retrieved_papers = state.get("retrieved_papers", [])
+    paper_evaluations = state.get("paper_evaluations", [])
+    
+    # Create a mapping of paper evaluations by arxiv_id
+    evaluations_by_id = {eval_data.get("arxiv_id"): eval_data for eval_data in paper_evaluations if "arxiv_id" in eval_data}
+    
+    # Filter papers by score > 0.6 and limit to top 5
+    filtered_papers = []
+    paper_scores = []
+    
+    for paper in retrieved_papers:
+        if isinstance(paper, dict) and "arxiv_id" in paper:
+            arxiv_id = paper["arxiv_id"]
+            if arxiv_id in evaluations_by_id:
+                eval_data = evaluations_by_id[arxiv_id]
+                score = eval_data.get("overall_score", 0.0)
+                if score > 0.6:
+                    paper_scores.append((paper, score))
+    
+    # Sort by score (highest first) and take top 5
+    paper_scores.sort(key=lambda x: x[1], reverse=True)
+    filtered_papers = [paper for paper, _ in paper_scores[:5]]
+    
+    logger.info(f"Filtered to {len(filtered_papers)} papers with score > 0.6 (top 5)")
+    
+    # Create results dictionary with filtered papers
+    results = {
+        "retrieved_papers": filtered_papers,
+        "paper_evaluations": evaluations_by_id,
+        "avg_score": state.get("avg_score", 0.0),
+        "search_iteration": state.get("search_iteration", 0),
+        "date_filter": state.get("date_filter", "last_month")
+    }
+    
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = output_dir / f"paper_retrieval_results_{timestamp}.json"
+    
+    # Save to file
+    try:
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        logger.info(f"Results saved to {output_file} with {len(filtered_papers)} top papers (score > 0.6, limited to top 5)")
+    except Exception as e:
+        logger.error(f"Failed to save results: {str(e)}")
+    
+    # Generate research application summary
+    summary_file = save_research_application_summary(results, output_dir)
+    
+    # Update state with formatted results
+    state["formatted_results"] = {
+        "results_file": str(output_file),
+        "summary_file": str(summary_file) if summary_file else None,
+        "paper_count": len(filtered_papers),
+        "evaluation_count": len(paper_evaluations),
+        "avg_score": state.get("avg_score", 0.0)
+    }
+    
+    # Set next to END to signal completion
+    state["next"] = "END"
     
     return state
 
 @traceable(run_type="chain")
-def format_and_save_results(state: GraphState) -> GraphState:
-    """Format the final results, save them to file, and print a summary"""
-    logger.info("Starting to format and save final results")
-    
-    # Create a new state dictionary to ensure we're not modifying the original
-    new_state = dict(state)
-    
-    # Get the papers and evaluations
-    retrieved_papers = new_state.get("retrieved_papers", [])
-    paper_evaluations = new_state.get("paper_evaluations", [])
-    
-    # Log what we're working with
-    logger.info(f"Formatting {len(retrieved_papers)} papers and {len(paper_evaluations)} evaluations")
-    
-    # Debug: Check if paper_evaluations have arxiv_ids
-    arxiv_ids_present = sum(1 for eval_data in paper_evaluations if isinstance(eval_data, dict) and "arxiv_id" in eval_data)
-    logger.info(f"Found {arxiv_ids_present} evaluations with arxiv_id out of {len(paper_evaluations)}")
-    
-    # Create a mapping from title to arxiv_id using retrieved_papers
-    title_to_arxiv = {}
-    for paper in retrieved_papers:
-        if isinstance(paper, dict) and "title" in paper and "arxiv_id" in paper:
-            # Normalize the title by removing extra whitespace
-            normalized_title = ' '.join(paper["title"].split())
-            title_to_arxiv[normalized_title] = paper["arxiv_id"]
-            # Also store with original title as a fallback
-            title_to_arxiv[paper["title"]] = paper["arxiv_id"]
-    
-    # Ensure all evaluations have arxiv_ids
-    for eval_data in paper_evaluations:
-        if isinstance(eval_data, dict) and "title" in eval_data and "arxiv_id" not in eval_data:
-            # Try to find the arxiv_id using the title
-            title = eval_data["title"]
-            normalized_title = ' '.join(title.split())
-            
-            if normalized_title in title_to_arxiv:
-                eval_data["arxiv_id"] = title_to_arxiv[normalized_title]
-                logger.info(f"Added arxiv_id to evaluation for '{title}' using normalized title")
-            elif title in title_to_arxiv:
-                eval_data["arxiv_id"] = title_to_arxiv[title]
-                logger.info(f"Added arxiv_id to evaluation for '{title}' using exact title")
-            else:
-                # Try to find a close match
-                for paper_title, arxiv_id in title_to_arxiv.items():
-                    if title in paper_title or paper_title in title:
-                        eval_data["arxiv_id"] = arxiv_id
-                        logger.info(f"Added arxiv_id to evaluation for '{title}' using partial match")
-                        break
-    
-    # Create evaluation dictionary for easier lookup using arxiv_id
-    evaluation_dict = {}
-    for eval_data in paper_evaluations:
-        if isinstance(eval_data, dict) and "arxiv_id" in eval_data:
-            evaluation_dict[eval_data["arxiv_id"]] = eval_data
-    
-    logger.info(f"Created evaluation lookup with {len(evaluation_dict)} entries by arxiv_id")
-    
-    # Filter papers by relevance score
-    filtered_papers = []
-    for paper in retrieved_papers:
-        if not isinstance(paper, dict) or "arxiv_id" not in paper:
-            continue
-            
-        arxiv_id = paper["arxiv_id"]
-        if arxiv_id in evaluation_dict:
-            score = evaluation_dict[arxiv_id].get("overall_score", 0.0)
-            if score > 0.5:
-                filtered_papers.append(paper)
-                logger.info(f"Keeping paper '{paper.get('title', 'Unknown')}' (ID: {arxiv_id}) with score {score}")
-            else:
-                logger.info(f"Filtering out paper '{paper.get('title', 'Unknown')}' (ID: {arxiv_id}) with low score {score}")
-        else:
-            # If no evaluation exists, keep the paper
-            filtered_papers.append(paper)
-            logger.info(f"Keeping paper '{paper.get('title', 'Unknown')}' (ID: {arxiv_id}) with no evaluation")
-    
-    logger.info(f"Filtered papers from {len(retrieved_papers)} to {len(filtered_papers)} (relevance > 0.5)")
-    
-    # Create a formatted result structure
-    formatted_results = {
-        "retrieved_papers": filtered_papers,
-        "paper_evaluations": {}
-    }
-    
-    # Add evaluations to formatted_results
-    for paper in filtered_papers:
-        if isinstance(paper, dict) and "arxiv_id" in paper:
-            arxiv_id = paper["arxiv_id"]
-            title = paper.get("title", "Unknown")
-            
-            if arxiv_id in evaluation_dict:
-                eval_data = evaluation_dict[arxiv_id]
-                formatted_results["paper_evaluations"][title] = {
-                    "arxiv_id": arxiv_id,
-                    "relevance_points": eval_data.get("relevance_points", []),
-                    "relevance_score": eval_data.get("overall_score", 0.0),
-                    "application_suggestions": eval_data.get("application_suggestions", []),
-                    "strengths": eval_data.get("strengths", []),
-                    "limitations": eval_data.get("limitations", []),
-                    "criteria_scores": eval_data.get("criteria_scores", {})
-                }
-    
-    # Add formatted results to state
-    new_state["formatted_results"] = formatted_results
-    
-    # Create output directory if it doesn't exist
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
-    
-    # Save results to file
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = output_dir / f"paper_retrieval_results_{timestamp}.json"
-        
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(formatted_results, f, indent=2, ensure_ascii=False)
-        logger.info(f"Results saved to {output_file}")
-        
-        # Also save the research application summary
-        summary_file = save_research_application_summary(formatted_results, output_dir)
-        if summary_file:
-            logger.info(f"Research application summary saved to {summary_file}")
-            # Add the summary file path to the state
-            new_state["summary_file"] = str(summary_file)
-    except Exception as e:
-        error_msg = f"Failed to save results to file: {str(e)}"
-        logger.error(error_msg)
-    
-    # Return the updated state
-    return new_state
-
 def create_context_from_analysis(analysis_points):
-    """Create context string from analysis points"""
-    context_sections = []
-    if analysis_points["research_gaps"]:
-        context_sections.append("Research Gaps:\n" + "\n".join([f"- {gap}" for gap in analysis_points["research_gaps"]]))
-    if analysis_points["key_research_areas"]:
-        context_sections.append("Key Research Areas:\n" + "\n".join([f"- {area}" for area in analysis_points["key_research_areas"]]))
-    if analysis_points["critical_analysis"]:
-        context_sections.append("Critical Analysis Points:\n" + "\n".join([f"- {point}" for point in analysis_points["critical_analysis"]]))
+    """Create a context string from analysis points"""
+    context_parts = []
     
-    return "\n\n".join(context_sections)
+    if "research_gaps" in analysis_points and analysis_points["research_gaps"]:
+        context_parts.append("Research Gaps:")
+        for i, gap in enumerate(analysis_points["research_gaps"], 1):
+            context_parts.append(f"{i}. {gap}")
+        context_parts.append("")
+    
+    if "key_research_areas" in analysis_points and analysis_points["key_research_areas"]:
+        context_parts.append("Key Research Areas:")
+        for i, area in enumerate(analysis_points["key_research_areas"], 1):
+            context_parts.append(f"{i}. {area}")
+        context_parts.append("")
+    
+    if "critical_analysis" in analysis_points and analysis_points["critical_analysis"]:
+        context_parts.append("Critical Analysis Points:")
+        for i, point in enumerate(analysis_points["critical_analysis"], 1):
+            context_parts.append(f"{i}. {point}")
+        context_parts.append("")
+    
+    if "keywords" in analysis_points and analysis_points["keywords"]:
+        context_parts.append("Keywords: " + ", ".join(analysis_points["keywords"]))
+    
+    context = "\n".join(context_parts)
+    logger.info(f"Created context with {len(context_parts)} sections")
+    return context
 
-def generate_search_queries(context: str, analysis_points: Dict) -> List[str]:
-    """Generate optimized ArXiv search keywords using existing keywords and LLM"""
-    # First, check if we have keywords in the analysis_points
-    if analysis_points.get("keywords") and len(analysis_points["keywords"]) >= 3:
-        # We have enough keywords, use them directly
-        keywords = analysis_points["keywords"][:5]  # Take up to 5 keywords
-        
-        # Format keywords for ArXiv search
-        formatted_keywords = []
-        for keyword in keywords:
-            # Clean up the keyword
-            clean_keyword = keyword.strip()
-            # Keep keywords short and focused
-            if len(clean_keyword.split()) > 3:
-                # For longer keywords, take just the key terms
-                words = clean_keyword.split()
-                clean_keyword = " ".join(words[:3])
-            # Add quotes for exact matching
-            formatted_keywords.append(f'"{clean_keyword}"')
-        
-        logger.info(f"Using keywords from analysis_results: {formatted_keywords[:3]}")
-        return formatted_keywords  # Return top 3 keywords
+@traceable(run_type="chain")
+def generate_search_queries(context, analysis_points):
+    """Generate search queries directly from keywords in analysis points"""
+    # Extract keywords from analysis points
+    keywords = analysis_points.get("keywords", [])
+    
+    if not keywords or len(keywords) < 2:
+        logger.warning("Not enough keywords found in analysis points, using fallback method")
+        # Fall back to LLM-based query generation
+        return generate_search_queries_with_llm(context, analysis_points)
+    
+    # Log the keywords
+    logger.info(f"Using {len(keywords)} keywords from analysis results")
+    for i, keyword in enumerate(keywords, 1):
+        logger.info(f"Keyword {i}: {keyword}")
+    
+    # Create search queries from keyword combinations
+    search_queries = []
+    
+    # Clean and format keywords
+    clean_keywords = []
+    for keyword in keywords:
+        clean_keyword = keyword.strip().replace("'", "").replace('"', '')
+        if clean_keyword:
+            clean_keywords.append(clean_keyword)
+    
+    # Generate all possible pairs of keywords
+    from itertools import combinations
+    keyword_pairs = list(combinations(clean_keywords, 2))
+    
+    # Limit to a reasonable number of combinations
+    max_combinations = min(8, len(keyword_pairs))
+    selected_pairs = keyword_pairs[:max_combinations]
+    
+    # Create combined queries with AND
+    for kw1, kw2 in selected_pairs:
+        search_queries.append(f'"{kw1}" AND "{kw2}"')
+    
+    # If we have fewer than 3 queries, add some individual keywords as well
+    if len(search_queries) < 3 and clean_keywords:
+        for keyword in clean_keywords[:3]:
+            if len(search_queries) < 5:  # Limit to 5 total queries
+                search_queries.append(f'"{keyword}"')
+    
+    # Ensure we have at least some queries
+    if not search_queries:
+        logger.warning("Failed to create queries from keywords, using fallback method")
+        return generate_search_queries_with_llm(context, analysis_points)
+    
+    # Log the generated queries
+    logger.info(f"Generated {len(search_queries)} search queries from keyword combinations")
+    for i, query in enumerate(search_queries, 1):
+        logger.info(f"Query {i}: {query}")
+    
+    return search_queries
 
-def execute_paper_searches(search_queries: List[str]) -> List[Dict]:
-    """Execute paper searches using the provided queries"""
-    # Create ArXiv search tool
-    arxiv_tool = ArxivSearchTool()
+@traceable(run_type="chain")
+def generate_search_queries_with_llm(context, analysis_points):
+    """Generate optimized search queries for ArXiv using LLM (fallback method)"""
+    # Create prompt template for query generation
+    query_prompt = ChatPromptTemplate.from_template("""
+    You are a research assistant helping to find relevant academic papers on ArXiv.
     
-    # Execute searches and collect papers
-    papers = []
+    Based on the following research context, generate 3-5 specific search queries that will help find the most relevant papers.
     
-    # First, try searching with all keywords combined (AND search)
-    if len(search_queries) >= 3:
+    Research Context:
+    {context}
+    
+    Create search queries that:
+    1. Are specific enough to return relevant results
+    2. Use proper ArXiv search syntax
+    3. Include key terms and concepts from the research gaps
+    4. Are diverse to cover different aspects of the research
+    
+    For each query:
+    - Use quotes for exact phrases
+    - Use AND/OR operators appropriately
+    - Include relevant keywords
+    - Focus on recent developments
+    
+    Return a list of search queries as a JSON array of strings.
+    """)
+    
+    # Create LLM
+    llm = ChatOpenAI(
+        model_name="gpt-3.5-turbo",
+        temperature=0.3
+    )
+    
+    # Create query generation chain
+    query_chain = query_prompt | llm | StrOutputParser() | extract_json
+    
+    # Execute chain
+    try:
+        result = query_chain.invoke({"context": context})
+        
+        # Handle different return formats
+        if isinstance(result, list):
+            queries = result
+        elif isinstance(result, dict) and "queries" in result:
+            queries = result["queries"]
+        else:
+            # Default queries from keywords if LLM output is invalid
+            logger.warning("Invalid LLM output format for queries, using fallback")
+            queries = [f'"{keyword}"' for keyword in analysis_points.get("keywords", [])[:5]]
+        
+        # Ensure we have at least some queries
+        if not queries:
+            # Fallback to basic queries from research gaps
+            logger.warning("No queries generated, using fallback from research gaps")
+            queries = [gap.split(".")[0] for gap in analysis_points.get("research_gaps", [])[:3]]
+        
+        # Log the generated queries
+        logger.info(f"Generated {len(queries)} search queries with LLM")
+        for i, query in enumerate(queries, 1):
+            logger.info(f"Query {i}: {query}")
+            
+        return queries
+        
+    except Exception as e:
+        logger.error(f"Error generating search queries with LLM: {str(e)}")
+        # Fallback to basic queries from keywords
+        fallback_queries = [f'"{keyword}"' for keyword in analysis_points.get("keywords", [])[:5]]
+        logger.info(f"Using {len(fallback_queries)} fallback queries")
+        return fallback_queries
+
+@traceable(run_type="chain")
+def check_refinement_needed(state: GraphState) -> tuple[GraphState, Literal["continue", "refine", "end"]]:
+    """Check if we need to refine the search by expanding the date window"""
+    search_iteration = state.get("search_iteration", 0)
+    avg_score = state.get("avg_score", 0.0)
+    no_date_limit = state.get("no_date_limit", False)
+    
+    if no_date_limit:
+        logger.info("No date limit mode - skipping refinement")
+        return state, "end"
+    
+    if avg_score < 0.6:
+        if search_iteration >= 6:
+            logger.info("Reached maximum search iterations (6 months). Ending search.")
+            return state, "end"
+        else:
+            # Expand search window by one month
+            search_iteration += 1
+            months_to_search = search_iteration
+            date_filter = f"last_{months_to_search}_months"
+            
+            logger.info(f"Low average score ({avg_score:.2f}). Expanding search window to {months_to_search} months (iteration {search_iteration})")
+            
+            # Update state with new search parameters
+            new_state = dict(state)  # Create a new state to avoid modifying the original
+            new_state["search_iteration"] = search_iteration
+            new_state["date_filter"] = date_filter
+            return new_state, "refine"
+    else:
+        logger.info(f"Satisfactory average score ({avg_score:.2f}). No refinement needed.")
+        return state, "end"
+
+@traceable(run_type="chain")
+def execute_paper_searches(search_queries, max_results_per_query=10, date_filter="last_month"):
+    """Execute ArXiv searches for each query and collect papers"""
+    all_papers = []
+    seen_arxiv_ids = set()
+    
+    # Get current date for filtering
+    current_date = datetime.now()
+    
+    # Calculate date range based on filter
+    if date_filter.endswith("_months"):
+        # Extract number of months from filter string (e.g., "last_3_months")
         try:
-            # Combine the first 3 keywords with AND operator
-            # Remove quotes for combining
-            clean_queries = [q.strip('"') for q in search_queries[:3]]
-            combined_query = f'"{clean_queries[0]} AND {clean_queries[1]} AND {clean_queries[2]}"'
+            months = int(date_filter.split("_")[1])
+            start_date = current_date - timedelta(days=30 * months)
+            logger.info(f"Searching papers from the last {months} months (since {start_date.strftime('%Y-%m-%d')})")
+        except (IndexError, ValueError):
+            start_date = current_date - timedelta(days=30)
+            logger.info("Invalid month format, defaulting to last month")
+    elif date_filter == "last_month":
+        start_date = current_date - timedelta(days=30)
+        logger.info(f"Searching papers from the last month (since {start_date.strftime('%Y-%m-%d')})")
+    elif date_filter == "last_week":
+        start_date = current_date - timedelta(days=7)
+        logger.info(f"Searching papers from the last week (since {start_date.strftime('%Y-%m-%d')})")
+    elif date_filter == "last_year":
+        start_date = current_date - timedelta(days=365)
+        logger.info(f"Searching papers from the last year (since {start_date.strftime('%Y-%m-%d')})")
+    else:
+        start_date = current_date - timedelta(days=30)
+        logger.warning(f"Unrecognized date filter '{date_filter}', defaulting to last month")
+    
+    # Create ArXiv client
+    client = Client()
+    
+    for query in search_queries:
+        try:
+            # Format the query to include date filtering
+            date_filter_str = f"submittedDate:[{start_date.strftime('%Y%m%d')}000000 TO {current_date.strftime('%Y%m%d')}235959]"
+            filtered_query = f"{query} AND {date_filter_str}"
             
-            logger.info(f"Searching with combined keywords: {combined_query}")
-            search_results = json.loads(arxiv_tool._run(combined_query))
+            logger.info(f"Searching ArXiv for: {filtered_query}")
             
-            if "papers" in search_results and search_results["papers"]:
-                for paper in search_results["papers"]:
-                    # Add to papers if not already there
-                    if not any(p.get("arxiv_id") == paper.get("arxiv_id") for p in papers):
-                        papers.append({
-                            "title": paper.get("title", ""),
-                            "arxiv_id": paper.get("arxiv_id", ""),
-                            "abstract": paper.get("abstract", ""),
-                            "authors": paper.get("authors", []),
-                            "published": paper.get("published", "")
-                        })
-                logger.info(f"Found {len(search_results['papers'])} papers with combined search")
+            # Create search object with date-filtered query
+            # Use the basic approach without sort parameters
+            search = Search(
+                query=filtered_query,
+                max_results=max_results_per_query
+            )
+            
+            # Execute search
+            results = list(client.results(search))
+            logger.info(f"Found {len(results)} papers for query: {query}")
+            
+            # Process results
+            for result in results:
+                # Skip if we've already seen this paper
+                if result.entry_id in seen_arxiv_ids:
+                    continue
+                
+                # Extract ArXiv ID from entry_id
+                # Format is typically http://arxiv.org/abs/2101.12345v1
+                arxiv_id_match = re.search(r'arxiv.org/abs/([^/]+)$', result.entry_id)
+                arxiv_id = arxiv_id_match.group(1) if arxiv_id_match else "unknown"
+                
+                # Add to seen IDs
+                seen_arxiv_ids.add(result.entry_id)
+                
+                # Create paper object
+                paper = {
+                    "title": result.title,
+                    "arxiv_id": arxiv_id,
+                    "abstract": result.summary,
+                    "authors": [author.name for author in result.authors],
+                    "published_date": result.published.isoformat() if result.published else None,
+                    "updated_date": result.updated.isoformat() if result.updated else None,
+                    "categories": result.categories,
+                    "entry_id": result.entry_id,
+                    "pdf_url": f"http://arxiv.org/pdf/{arxiv_id}"
+                }
+                
+                all_papers.append(paper)
+                
+            logger.info(f"Processed {len(results)} papers for query: {query}")
+            
         except Exception as e:
-            logger.warning(f"Combined search failed: {str(e)}")
+            logger.error(f"Error searching ArXiv for query '{query}': {str(e)}")
     
-    # If combined search didn't yield enough results, try individual keywords
-    if len(papers) < 5:
-        for query in search_queries:
-            try:
-                logger.info(f"Searching for individual keyword: {query}")
-                search_results = json.loads(arxiv_tool._run(query))
-                if "papers" in search_results:
-                    for paper in search_results["papers"]:
-                        # Add to papers if not already there
-                        if not any(p.get("arxiv_id") == paper.get("arxiv_id") for p in papers):
-                            papers.append({
-                                "title": paper.get("title", ""),
-                                "arxiv_id": paper.get("arxiv_id", ""),
-                                "abstract": paper.get("abstract", ""),
-                                "authors": paper.get("authors", []),
-                                "published": paper.get("published", "")
-                            })
-            except Exception as e:
-                logger.error(f"Error searching for {query}: {str(e)}")
+    # Remove any remaining duplicates by arxiv_id
+    unique_papers = []
+    seen_ids = set()
     
-    # If we still don't have enough papers, try pairs of keywords
-    if len(papers) < 5 and len(search_queries) >= 2:
-        for i in range(len(search_queries) - 1):
-            for j in range(i + 1, len(search_queries)):
-                try:
-                    # Combine two keywords with AND
-                    clean_query1 = search_queries[i].strip('"')
-                    clean_query2 = search_queries[j].strip('"')
-                    pair_query = f'"{clean_query1} AND {clean_query2}"'
-                    
-                    logger.info(f"Searching with keyword pair: {pair_query}")
-                    search_results = json.loads(arxiv_tool._run(pair_query))
-                    
-                    if "papers" in search_results:
-                        for paper in search_results["papers"]:
-                            # Add to papers if not already there
-                            if not any(p.get("arxiv_id") == paper.get("arxiv_id") for p in papers):
-                                papers.append({
-                                    "title": paper.get("title", ""),
-                                    "arxiv_id": paper.get("arxiv_id", ""),
-                                    "abstract": paper.get("abstract", ""),
-                                    "authors": paper.get("authors", []),
-                                    "published": paper.get("published", "")
-                                })
-                except Exception as e:
-                    logger.warning(f"Pair search failed: {str(e)}")
+    for paper in all_papers:
+        if paper["arxiv_id"] not in seen_ids:
+            seen_ids.add(paper["arxiv_id"])
+            unique_papers.append(paper)
     
-    logger.info(f"Total unique papers found: {len(papers)}")
-    return papers
+    logger.info(f"Retrieved {len(unique_papers)} unique papers from ArXiv")
+    return unique_papers
 
 @traceable(run_type="chain")
 def retrieve_papers(state: GraphState) -> GraphState:
@@ -748,8 +768,8 @@ def save_research_application_summary(results, output_dir):
         eval_data = evaluations_by_id[arxiv_id]
         overall_score = eval_data.get("overall_score", eval_data.get("relevance_score", 0.0))
         
-        # Skip papers with relevance score <= 0.5
-        if overall_score <= 0.5:
+        # Skip papers with relevance score < 0.6 (increased from 0.5)
+        if overall_score < 0.6:
             logger.info(f"Skipping paper '{title}' - low relevance score: {overall_score}")
             continue
         
@@ -774,6 +794,9 @@ def save_research_application_summary(results, output_dir):
     # Sort papers by overall score (highest first)
     summary["papers"] = sorted(summary["papers"], key=lambda p: p.get("overall_score", 0), reverse=True)
     
+    # Limit to top 5 papers
+    summary["papers"] = summary["papers"][:5]
+    
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"research_application_summary_{timestamp}.json"
@@ -782,7 +805,7 @@ def save_research_application_summary(results, output_dir):
     try:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
-        logger.info(f"Research application summary saved with {len(summary['papers'])} relevant papers (with detailed criteria)")
+        logger.info(f"Research application summary saved with {len(summary['papers'])} top relevant papers (score > 0.6, limited to top 5)")
         return output_file
     except Exception as e:
         error_msg = f"Failed to save research application summary: {str(e)}"
@@ -891,6 +914,51 @@ def evaluate_single_paper(paper, context):
         }
 
 @traceable(run_type="chain")
+def refinement_router(state: GraphState) -> GraphState:
+    """Route to the next node based on refinement needs"""
+    search_iteration = state.get("search_iteration", 0)
+    avg_score = state.get("avg_score", 0.0)
+    
+    # Hard limit on iterations to prevent infinite loops
+    MAX_ITERATIONS = 12
+    
+    # Debug logging
+    logger.info(f"Refinement check: iteration={search_iteration}, avg_score={avg_score:.2f}")
+    
+    if avg_score < 0.6 and search_iteration < MAX_ITERATIONS:
+        # Expand search window by one month
+        search_iteration += 1
+        months_to_search = search_iteration
+        date_filter = f"last_{months_to_search}_months"
+        
+        logger.info(f"Low average score ({avg_score:.2f}). Expanding search window to {months_to_search} months (iteration {search_iteration}/{MAX_ITERATIONS})")
+        
+        # Create a new state to avoid modifying the original
+        new_state = dict(state)
+        new_state["search_iteration"] = search_iteration
+        new_state["date_filter"] = date_filter
+        new_state["next"] = "retrieve"
+        
+        # Debug log the updated state
+        logger.info(f"Updated state: iteration={new_state['search_iteration']}, date_filter={new_state['date_filter']}, next={new_state['next']}")
+        
+        return new_state
+    else:
+        if search_iteration >= MAX_ITERATIONS:
+            logger.info(f"Reached maximum search iterations ({MAX_ITERATIONS} months). Ending search.")
+        else:
+            logger.info(f"Satisfactory average score ({avg_score:.2f}). No refinement needed.")
+        
+        # Create a new state to avoid modifying the original
+        new_state = dict(state)
+        new_state["next"] = "format_and_save"
+        
+        # Debug log the updated state
+        logger.info(f"Updated state: next={new_state['next']}")
+        
+        return new_state
+
+@traceable(run_type="chain")
 def main():
     """Main execution function"""
     try:
@@ -904,12 +972,20 @@ def main():
         workflow.add_node("initialize", initialize)
         workflow.add_node("retrieve", paper_search_agent)
         workflow.add_node("evaluate", evaluate_papers)
+        workflow.add_node("check_refinement", refinement_router)
         workflow.add_node("format_and_save", format_and_save_results)
         
         # Add edges
         workflow.add_edge("initialize", "retrieve")
         workflow.add_edge("retrieve", "evaluate")
-        workflow.add_edge("evaluate", "format_and_save")
+        workflow.add_edge("evaluate", "check_refinement")
+        
+        # Add conditional edges based on the 'next' field in state
+        workflow.add_conditional_edges(
+            "check_refinement",
+            lambda state: state["next"]
+        )
+        
         workflow.add_edge("format_and_save", END)
         
         # Set entry point
@@ -926,12 +1002,69 @@ def main():
             "paper_evaluations": [],
             "refined_queries": [],
             "avg_score": 0.0,
-            "need_refinement": False
+            "need_refinement": False,
+            "date_filter": "last_month",
+            "search_iteration": 0,
+            "next": None  # Initialize the 'next' field
         }
         
-        # Run workflow
-        logger.info("Starting paper retrieval workflow")
-        final_state = app.invoke(initial_state)
+        # Run workflow manually to avoid recursion issues
+        logger.info("Starting paper retrieval workflow with manual execution")
+        
+        # Manual execution approach
+        current_state = initial_state
+        max_iterations = 10
+        
+        # First step: initialize
+        logger.info("Step 1: Initialize")
+        current_state = initialize(current_state)
+        
+        # Second step: retrieve papers (first iteration)
+        logger.info("Step 2: Retrieve papers (initial search)")
+        current_state = paper_search_agent(current_state)
+        
+        # Third step: evaluate papers
+        logger.info("Step 3: Evaluate papers")
+        current_state = evaluate_papers(current_state)
+        
+        # Refinement loop
+        for iteration in range(max_iterations):
+            logger.info(f"Refinement iteration {iteration+1}/{max_iterations}")
+            
+            # Check if refinement is needed
+            refinement_state = refinement_router(current_state)
+            next_step = refinement_state.get("next")
+            
+            logger.info(f"Refinement decision: {next_step}")
+            
+            if next_step == "format_and_save" or next_step == "END":
+                logger.info("No further refinement needed, proceeding to final step")
+                current_state = refinement_state
+                break
+                
+            if next_step == "retrieve":
+                logger.info(f"Refinement needed, expanding search (iteration {iteration+1})")
+                # Update current state with refinement changes
+                current_state = refinement_state
+                
+                # Retrieve more papers with expanded date range
+                logger.info(f"Retrieving papers with expanded date filter: {current_state.get('date_filter')}")
+                current_state = paper_search_agent(current_state)
+                
+                # Evaluate the new papers
+                logger.info("Evaluating new papers")
+                current_state = evaluate_papers(current_state)
+                
+                # Continue to next iteration of refinement
+                continue
+                
+            # If we get here, something unexpected happened
+            logger.warning(f"Unexpected next step: {next_step}, stopping refinement")
+            break
+            
+        # Final step: format and save results
+        logger.info("Final step: Format and save results")
+        final_state = format_and_save_results(current_state)
         
         # Debug log the final state
         logger.info(f"Final state keys: {list(final_state.keys())}")
